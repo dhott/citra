@@ -7,6 +7,7 @@
 #include <QtGui>
 #include <QDesktopWidget>
 #include <QFileDialog>
+#include <QMessageBox>
 #include "qhexedit.h"
 #include "main.h"
 
@@ -122,9 +123,8 @@ GMainWindow::GMainWindow() : emu_thread(nullptr)
     y = (screenRect.y() + screenRect.height()) / 2 - h * 55 / 100;
     setGeometry(x, y, w, h);
 
-
     // Restore UI state
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Citra team", "Citra");
+    QSettings settings;
     restoreGeometry(settings.value("geometry").toByteArray());
     restoreState(settings.value("state").toByteArray());
     render_window->restoreGeometry(settings.value("geometryRenderWindow").toByteArray());
@@ -132,11 +132,24 @@ GMainWindow::GMainWindow() : emu_thread(nullptr)
     ui.action_Use_Hardware_Renderer->setChecked(Settings::values.use_hw_renderer);
     SetHardwareRendererEnabled(ui.action_Use_Hardware_Renderer->isChecked());
 
+    ui.action_Use_Shader_JIT->setChecked(Settings::values.use_shader_jit);
+    SetShaderJITEnabled(ui.action_Use_Shader_JIT->isChecked());
+
     ui.action_Single_Window_Mode->setChecked(settings.value("singleWindowMode", true).toBool());
     ToggleWindowMode();
 
     ui.actionDisplay_widget_title_bars->setChecked(settings.value("displayTitleBars", true).toBool());
     OnDisplayTitleBars(ui.actionDisplay_widget_title_bars->isChecked());
+
+    // Prepare actions for recent files
+    for (int i = 0; i < max_recent_files_item; ++i) {
+        actions_recent_files[i] = new QAction(this);
+        actions_recent_files[i]->setVisible(false);
+        connect(actions_recent_files[i], SIGNAL(triggered()), this, SLOT(OnMenuRecentFile()));
+
+        ui.menu_recent_files->addAction(actions_recent_files[i]);
+    }
+    UpdateRecentFiles();
 
     // Setup connections
     connect(ui.action_Load_File, SIGNAL(triggered()), this, SLOT(OnMenuLoadFile()));
@@ -145,6 +158,7 @@ GMainWindow::GMainWindow() : emu_thread(nullptr)
     connect(ui.action_Pause, SIGNAL(triggered()), this, SLOT(OnPauseGame()));
     connect(ui.action_Stop, SIGNAL(triggered()), this, SLOT(OnStopGame()));
     connect(ui.action_Use_Hardware_Renderer, SIGNAL(triggered(bool)), this, SLOT(SetHardwareRendererEnabled(bool)));
+    connect(ui.action_Use_Shader_JIT, SIGNAL(triggered(bool)), this, SLOT(SetShaderJITEnabled(bool)));
     connect(ui.action_Single_Window_Mode, SIGNAL(triggered(bool)), this, SLOT(ToggleWindowMode()));
     connect(ui.action_Hotkeys, SIGNAL(triggered()), this, SLOT(OnOpenHotkeysDialog()));
 
@@ -207,8 +221,12 @@ void GMainWindow::OnDisplayTitleBars(bool show)
     }
 }
 
-void GMainWindow::BootGame(std::string filename) {
+void GMainWindow::BootGame(const std::string& filename) {
     LOG_INFO(Frontend, "Citra starting...\n");
+
+    // Shutdown previous session if the emu thread is still active...
+    if (emu_thread != nullptr)
+        ShutdownGame();
 
     // Initialize the core emulation
     System::Init(render_window);
@@ -263,40 +281,102 @@ void GMainWindow::ShutdownGame() {
 
     // Update the GUI
     ui.action_Start->setEnabled(false);
+    ui.action_Start->setText(tr("Start"));
     ui.action_Pause->setEnabled(false);
     ui.action_Stop->setEnabled(false);
     render_window->hide();
 }
 
-void GMainWindow::OnMenuLoadFile()
-{
-    QString filename = QFileDialog::getOpenFileName(this, tr("Load File"), QString(), tr("3DS executable (*.3ds *.3dsx *.elf *.axf *.cci *.cxi)"));
+void GMainWindow::UpdateRecentFiles() {
+    QSettings settings;
+    QStringList recent_files = settings.value("recentFiles").toStringList();
+
+    unsigned int num_recent_files = std::min(recent_files.size(), static_cast<int>(max_recent_files_item));
+
+    for (unsigned int i = 0; i < num_recent_files; i++) {
+        QString text = QString("&%1. %2").arg(i + 1).arg(QFileInfo(recent_files[i]).fileName());
+        actions_recent_files[i]->setText(text);
+        actions_recent_files[i]->setData(recent_files[i]);
+        actions_recent_files[i]->setVisible(true);
+    }
+
+    for (int j = num_recent_files; j < max_recent_files_item; ++j) {
+        actions_recent_files[j]->setVisible(false);
+    }
+
+    // Grey out the recent files menu if the list is empty
+    if (num_recent_files == 0) {
+        ui.menu_recent_files->setEnabled(false);
+    } else {
+        ui.menu_recent_files->setEnabled(true);
+    }
+}
+
+void GMainWindow::OnMenuLoadFile() {
+    QSettings settings;
+    QString rom_path = settings.value("romsPath", QString()).toString();
+
+    QString filename = QFileDialog::getOpenFileName(this, tr("Load File"), rom_path, tr("3DS executable (*.3ds *.3dsx *.elf *.axf *.cci *.cxi)"));
     if (filename.size()) {
-        // Shutdown previous session if the emu thread is still active...
-        if (emu_thread != nullptr)
-            ShutdownGame();
+        settings.setValue("romsPath", QFileInfo(filename).path());
+        // Update recent files list
+        QStringList recent_files = settings.value("recentFiles").toStringList();
+        recent_files.prepend(filename);
+        settings.setValue("recentFiles", recent_files);
+        UpdateRecentFiles(); // Update UI
 
         BootGame(filename.toLatin1().data());
     }
 }
 
 void GMainWindow::OnMenuLoadSymbolMap() {
-    QString filename = QFileDialog::getOpenFileName(this, tr("Load Symbol Map"), QString(), tr("Symbol map (*)"));
-    if (filename.size())
+    QSettings settings;
+    QString symbol_path = settings.value("symbolsPath", QString()).toString();
+
+    QString filename = QFileDialog::getOpenFileName(this, tr("Load Symbol Map"), symbol_path, tr("Symbol map (*)"));
+    if (filename.size()) {
+        settings.setValue("symbolsPath", QFileInfo(filename).path());
+
         LoadSymbolMap(filename.toLatin1().data());
+    }
 }
 
-void GMainWindow::OnStartGame()
-{
+void GMainWindow::OnMenuRecentFile() {
+    QAction* action = qobject_cast<QAction*>(sender());
+    assert(action);
+
+    QString filename = action->data().toString();
+    QFileInfo file_info(filename);
+    if (file_info.exists()) {
+        BootGame(filename.toLatin1().data());
+    } else {
+        // Display an error message and remove the file from the list.
+        QMessageBox::information(this, tr("File not found"), tr("File \"%1\" not found").arg(filename));
+
+        QSettings settings;
+        QStringList recent_files = settings.value("recentFiles").toStringList();
+        recent_files.removeOne(filename);
+        settings.setValue("recentFiles", recent_files);
+
+        action->setVisible(false);
+        // Grey out the recent files menu if the list is empty
+        if (ui.menu_recent_files->isEmpty()) {
+            ui.menu_recent_files->setEnabled(false);
+        }
+    }
+}
+
+void GMainWindow::OnStartGame() {
     emu_thread->SetRunning(true);
 
     ui.action_Start->setEnabled(false);
+    ui.action_Start->setText(tr("Continue"));
+
     ui.action_Pause->setEnabled(true);
     ui.action_Stop->setEnabled(true);
 }
 
-void GMainWindow::OnPauseGame()
-{
+void GMainWindow::OnPauseGame() {
     emu_thread->SetRunning(false);
 
     ui.action_Start->setEnabled(true);
@@ -308,14 +388,17 @@ void GMainWindow::OnStopGame() {
     ShutdownGame();
 }
 
-void GMainWindow::OnOpenHotkeysDialog()
-{
+void GMainWindow::OnOpenHotkeysDialog() {
     GHotkeysDialog dialog(this);
     dialog.exec();
 }
 
 void GMainWindow::SetHardwareRendererEnabled(bool enabled) {
     VideoCore::g_hw_renderer_enabled = enabled;
+}
+
+void GMainWindow::SetShaderJITEnabled(bool enabled) {
+    VideoCore::g_shader_jit_enabled = enabled;
 }
 
 void GMainWindow::ToggleWindowMode() {
@@ -337,13 +420,11 @@ void GMainWindow::ToggleWindowMode() {
     }
 }
 
-void GMainWindow::OnConfigure()
-{
+void GMainWindow::OnConfigure() {
     //GControllerConfigDialog* dialog = new GControllerConfigDialog(controller_ports, this);
 }
 
-void GMainWindow::closeEvent(QCloseEvent* event)
-{
+void GMainWindow::closeEvent(QCloseEvent* event) {
     // Save window layout
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Citra team", "Citra");
     settings.setValue("geometry", saveGeometry());
@@ -367,10 +448,14 @@ void GMainWindow::closeEvent(QCloseEvent* event)
 #undef main
 #endif
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     Log::Filter log_filter(Log::Level::Info);
     Log::SetFilter(&log_filter);
+
+    // Init settings params
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QCoreApplication::setOrganizationName("Citra team");
+    QCoreApplication::setApplicationName("Citra");
 
     QApplication::setAttribute(Qt::AA_X11InitThreads);
     QApplication app(argc, argv);

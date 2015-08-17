@@ -5,6 +5,7 @@
 #include "common/logging/log.h"
 
 #include "core/hle/service/service.h"
+#include "core/hle/service/am/am.h"
 #include "core/hle/service/am/am_app.h"
 #include "core/hle/service/am/am_net.h"
 #include "core/hle/service/am/am_sys.h"
@@ -35,7 +36,16 @@ void GetTitleIDList(Service::Interface* self) {
     cmd_buff[1] = RESULT_SUCCESS.raw;
     cmd_buff[2] = 0;
 
-    LOG_WARNING(Service_AM, "(STUBBED) Requested %u titles from media type %u", num_titles, media_type);
+    LOG_WARNING(Service_AM, "(STUBBED) Requested %u titles from media type %u. Address=0x%08X", num_titles, media_type, addr);
+}
+
+void GetNumContentInfos(Service::Interface* self) {
+    u32* cmd_buff = Kernel::GetCommandBuffer();
+
+    cmd_buff[1] = RESULT_SUCCESS.raw;
+    cmd_buff[2] = 1; // Number of content infos plus one
+
+    LOG_WARNING(Service_AM, "(STUBBED) called");
 }
 
 void Init() {

@@ -14,6 +14,7 @@
 #include "core/hw/lcd.h"
 
 #include "video_core/gpu_debugger.h"
+#include "video_core/debug_utils/debug_utils.h"
 #include "video_core/renderer_base.h"
 #include "video_core/video_core.h"
 
@@ -226,6 +227,9 @@ void SetBufferSwap(u32 screen_id, const FrameBufferInfo& info) {
             &info.format);
     WriteHWRegs(base_address + 4 * static_cast<u32>(GPU_REG_INDEX(framebuffer_config[screen_id].active_fb)), 4,
             &info.shown_fb);
+
+    if (Pica::g_debug_context)
+        Pica::g_debug_context->OnEvent(Pica::DebugContext::Event::BufferSwapped, nullptr);
 }
 
 /**
@@ -391,19 +395,24 @@ static void ExecuteCommand(const Command& command, u32 thread_id) {
     case CommandId::SET_MEMORY_FILL:
     {
         auto& params = command.memory_fill;
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].address_start)),
-                         Memory::VirtualToPhysicalAddress(params.start1) >> 3);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].address_end)),
-                         Memory::VirtualToPhysicalAddress(params.end1) >> 3);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].value_32bit)), params.value1);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].control)), params.control1);
 
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].address_start)),
-                         Memory::VirtualToPhysicalAddress(params.start2) >> 3);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].address_end)),
-                         Memory::VirtualToPhysicalAddress(params.end2) >> 3);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].value_32bit)), params.value2);
-        WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].control)), params.control2);
+        if (params.start1 != 0) {
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].address_start)),
+                    Memory::VirtualToPhysicalAddress(params.start1) >> 3);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].address_end)),
+                    Memory::VirtualToPhysicalAddress(params.end1) >> 3);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].value_32bit)), params.value1);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[0].control)), params.control1);
+        }
+
+        if (params.start2 != 0) {
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].address_start)),
+                    Memory::VirtualToPhysicalAddress(params.start2) >> 3);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].address_end)),
+                    Memory::VirtualToPhysicalAddress(params.end2) >> 3);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].value_32bit)), params.value2);
+            WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(memory_fill_config[1].control)), params.control2);
+        }
         break;
     }
 
@@ -448,6 +457,9 @@ static void ExecuteCommand(const Command& command, u32 thread_id) {
     default:
         LOG_ERROR(Service_GSP, "unknown command 0x%08X", (int)command.id.Value());
     }
+
+    if (Pica::g_debug_context)
+        Pica::g_debug_context->OnEvent(Pica::DebugContext::Event::GSPCommandProcessed, (void*)&command);
 }
 
 /**

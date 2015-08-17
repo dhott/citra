@@ -56,18 +56,18 @@ static FileType IdentifyFile(FileUtil::IOFile& file) {
 static FileType GuessFromExtension(const std::string& extension_) {
     std::string extension = Common::ToLower(extension_);
 
-    if (extension == ".elf")
+    if (extension == ".elf" || extension == ".axf")
         return FileType::ELF;
-    else if (extension == ".axf")
-        return FileType::ELF;
-    else if (extension == ".cxi")
+
+    if (extension == ".cci" || extension == ".3ds")
+        return FileType::CCI;
+
+    if (extension == ".cxi")
         return FileType::CXI;
-    else if (extension == ".cci")
-        return FileType::CCI;
-    else if (extension == ".3ds")
-        return FileType::CCI;
-    else if (extension == ".3dsx")
+
+    if (extension == ".3dsx")
         return FileType::THREEDSX;
+
     return FileType::Unknown;
 }
 
@@ -77,6 +77,8 @@ static const char* GetFileTypeString(FileType type) {
         return "NCSD";
     case FileType::CXI:
         return "NCCH";
+    case FileType::CIA:
+        return "CIA";
     case FileType::ELF:
         return "ELF";
     case FileType::THREEDSX:
@@ -133,6 +135,10 @@ ResultStatus LoadFile(const std::string& filename) {
         }
         break;
     }
+
+    // CIA file format...
+    case FileType::CIA:
+        return ResultStatus::ErrorNotImplemented;
 
     // Error occurred durring IdentifyFile...
     case FileType::Error:

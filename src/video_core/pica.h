@@ -7,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <map>
 #include <string>
 
 #include "common/assert.h"
@@ -81,6 +80,11 @@ struct Regs {
             POSITION_Z   =  2,
             POSITION_W   =  3,
 
+            QUATERNION_X =  4,
+            QUATERNION_Y =  5,
+            QUATERNION_Z =  6,
+            QUATERNION_W =  7,
+
             COLOR_R      =  8,
             COLOR_G      =  9,
             COLOR_B      = 10,
@@ -90,6 +94,12 @@ struct Regs {
             TEXCOORD0_V  = 13,
             TEXCOORD1_U  = 14,
             TEXCOORD1_V  = 15,
+
+            // TODO: Not verified
+            VIEW_X       = 18,
+            VIEW_Y       = 19,
+            VIEW_Z       = 20,
+
             TEXCOORD2_U  = 22,
             TEXCOORD2_V  = 23,
 
@@ -119,6 +129,11 @@ struct Regs {
             MirroredRepeat = 3,
         };
 
+        enum TextureFilter : u32 {
+            Nearest = 0,
+            Linear  = 1
+        };
+
         union {
             BitField< 0, 8, u32> r;
             BitField< 8, 8, u32> g;
@@ -132,6 +147,8 @@ struct Regs {
         };
 
         union {
+            BitField< 1, 1, TextureFilter> mag_filter;
+            BitField< 2, 1, TextureFilter> min_filter;
             BitField< 8, 2, WrapMode> wrap_t;
             BitField<12, 2, WrapMode> wrap_s;
         };
@@ -157,7 +174,7 @@ struct Regs {
         RGB565       =  3,
         RGBA4        =  4,
         IA8          =  5,
-
+        RG8          =  6,  ///< @note Also called HILO8 in 3DBrew.
         I8           =  7,
         A8           =  8,
         IA4          =  9,
@@ -198,6 +215,7 @@ struct Regs {
         case TextureFormat::RGB565:
         case TextureFormat::RGBA4:
         case TextureFormat::IA8:
+        case TextureFormat::RG8:
             return 4;
 
         case TextureFormat::I4:
@@ -901,69 +919,7 @@ struct Regs {
 
     // Map register indices to names readable by humans
     // Used for debugging purposes, so performance is not an issue here
-    static std::string GetCommandName(int index) {
-        std::map<u32, std::string> map;
-
-        #define ADD_FIELD(name)                                                                               \
-            do {                                                                                              \
-                map.insert({PICA_REG_INDEX(name), #name});                                                    \
-                /* TODO: change to Regs::name when VS2015 and other compilers support it  */                   \
-                for (u32 i = PICA_REG_INDEX(name) + 1; i < PICA_REG_INDEX(name) + sizeof(Regs().name) / 4; ++i) \
-                    map.insert({i, #name + std::string("+") + std::to_string(i-PICA_REG_INDEX(name))});       \
-            } while(false)
-
-        ADD_FIELD(trigger_irq);
-        ADD_FIELD(cull_mode);
-        ADD_FIELD(viewport_size_x);
-        ADD_FIELD(viewport_size_y);
-        ADD_FIELD(viewport_depth_range);
-        ADD_FIELD(viewport_depth_far_plane);
-        ADD_FIELD(viewport_corner);
-        ADD_FIELD(texture0_enable);
-        ADD_FIELD(texture0);
-        ADD_FIELD(texture0_format);
-        ADD_FIELD(texture1);
-        ADD_FIELD(texture1_format);
-        ADD_FIELD(texture2);
-        ADD_FIELD(texture2_format);
-        ADD_FIELD(tev_stage0);
-        ADD_FIELD(tev_stage1);
-        ADD_FIELD(tev_stage2);
-        ADD_FIELD(tev_stage3);
-        ADD_FIELD(tev_combiner_buffer_input);
-        ADD_FIELD(tev_stage4);
-        ADD_FIELD(tev_stage5);
-        ADD_FIELD(tev_combiner_buffer_color);
-        ADD_FIELD(output_merger);
-        ADD_FIELD(framebuffer);
-        ADD_FIELD(vertex_attributes);
-        ADD_FIELD(index_array);
-        ADD_FIELD(num_vertices);
-        ADD_FIELD(trigger_draw);
-        ADD_FIELD(trigger_draw_indexed);
-        ADD_FIELD(vs_default_attributes_setup);
-        ADD_FIELD(command_buffer);
-        ADD_FIELD(triangle_topology);
-        ADD_FIELD(gs.bool_uniforms);
-        ADD_FIELD(gs.int_uniforms);
-        ADD_FIELD(gs.main_offset);
-        ADD_FIELD(gs.input_register_map);
-        ADD_FIELD(gs.uniform_setup);
-        ADD_FIELD(gs.program);
-        ADD_FIELD(gs.swizzle_patterns);
-        ADD_FIELD(vs.bool_uniforms);
-        ADD_FIELD(vs.int_uniforms);
-        ADD_FIELD(vs.main_offset);
-        ADD_FIELD(vs.input_register_map);
-        ADD_FIELD(vs.uniform_setup);
-        ADD_FIELD(vs.program);
-        ADD_FIELD(vs.swizzle_patterns);
-
-        #undef ADD_FIELD
-
-        // Return empty string if no match is found
-        return map[index];
-    }
+    static std::string GetCommandName(int index);
 
     static inline size_t NumIds() {
         return sizeof(Regs) / sizeof(u32);
@@ -1139,6 +1095,7 @@ private:
     // TODO: Perform proper arithmetic on this!
     float value;
 };
+static_assert(sizeof(float24) == sizeof(float), "Shader JIT assumes float24 is implemented as a 32-bit float");
 
 /// Struct used to describe current Pica state
 struct State {
@@ -1148,7 +1105,10 @@ struct State {
     /// Vertex shader memory
     struct ShaderSetup {
         struct {
-            Math::Vec4<float24> f[96];
+            // The float uniforms are accessed by the shader JIT using SSE instructions, and are
+            // therefore required to be 16-byte aligned.
+            Math::Vec4<float24> MEMORY_ALIGNED16(f[96]);
+
             std::array<bool, 16> b;
             std::array<Math::Vec4<u8>, 4> i;
         } uniforms;

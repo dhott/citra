@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QTreeView>
+#include <QHeaderView>
 #include <QSpinBox>
 #include <QComboBox>
 
@@ -72,7 +73,7 @@ TextureInfoDockWidget::TextureInfoDockWidget(const Pica::DebugUtils::TextureInfo
     format_choice->addItem(tr("RGB565"));
     format_choice->addItem(tr("RGBA4"));
     format_choice->addItem(tr("IA8"));
-    format_choice->addItem(tr("UNK6"));
+    format_choice->addItem(tr("RG8"));
     format_choice->addItem(tr("I8"));
     format_choice->addItem(tr("A8"));
     format_choice->addItem(tr("IA4"));
@@ -170,34 +171,33 @@ GPUCommandListModel::GPUCommandListModel(QObject* parent) : QAbstractListModel(p
 }
 
 int GPUCommandListModel::rowCount(const QModelIndex& parent) const {
-    return pica_trace.writes.size();
+    return static_cast<int>(pica_trace.writes.size());
 }
 
 int GPUCommandListModel::columnCount(const QModelIndex& parent) const {
-    return 2;
+    return 4;
 }
 
 QVariant GPUCommandListModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid())
         return QVariant();
 
-    const auto& writes = pica_trace.writes;
-    const Pica::CommandProcessor::CommandHeader cmd{writes[index.row()].Id()};
-    const u32 val{writes[index.row()].Value()};
+    const auto& write = pica_trace.writes[index.row()];
 
     if (role == Qt::DisplayRole) {
         QString content;
-        if (index.column() == 0) {
-            QString content = QString::fromLatin1(Pica::Regs::GetCommandName(cmd.cmd_id).c_str());
-            content.append(" ");
-            return content;
-        } else if (index.column() == 1) {
-            QString content = QString("%1 ").arg(cmd.hex, 8, 16, QLatin1Char('0'));
-            content.append(QString("%1 ").arg(val, 8, 16, QLatin1Char('0')));
-            return content;
+        switch ( index.column() ) {
+        case 0:
+            return QString::fromLatin1(Pica::Regs::GetCommandName(write.cmd_id).c_str());
+        case 1:
+            return QString("%1").arg(write.cmd_id, 3, 16, QLatin1Char('0'));
+        case 2:
+            return QString("%1").arg(write.mask, 4, 2, QLatin1Char('0'));
+        case 3:
+            return QString("%1").arg(write.value, 8, 16, QLatin1Char('0'));
         }
     } else if (role == CommandIdRole) {
-        return QVariant::fromValue<int>(cmd.cmd_id.Value());
+        return QVariant::fromValue<int>(write.cmd_id);
     }
 
     return QVariant();
@@ -207,10 +207,15 @@ QVariant GPUCommandListModel::headerData(int section, Qt::Orientation orientatio
     switch(role) {
     case Qt::DisplayRole:
     {
-        if (section == 0) {
+        switch (section) {
+        case 0:
             return tr("Command Name");
-        } else if (section == 1) {
-            return tr("Data");
+        case 1:
+            return tr("Register");
+        case 2:
+            return tr("Mask");
+        case 3:
+            return tr("New Value");
         }
 
         break;
@@ -257,7 +262,7 @@ void GPUCommandListWidget::OnCommandDoubleClicked(const QModelIndex& index) {
 }
 
 void GPUCommandListWidget::SetCommandInfo(const QModelIndex& index) {
-    QWidget* new_info_widget;
+    QWidget* new_info_widget = nullptr;
 
     const unsigned int command_id = list_widget->model()->data(index, GPUCommandListModel::CommandIdRole).toUInt();
     if (COMMAND_IN_RANGE(command_id, texture0) ||
@@ -278,14 +283,15 @@ void GPUCommandListWidget::SetCommandInfo(const QModelIndex& index) {
         auto info = Pica::DebugUtils::TextureInfo::FromPicaRegister(config, format);
         u8* src = Memory::GetPhysicalPointer(config.GetPhysicalAddress());
         new_info_widget = new TextureInfoWidget(src, info);
-    } else {
-        new_info_widget = new QWidget;
     }
-
-    widget()->layout()->removeWidget(command_info_widget);
-    delete command_info_widget;
-    widget()->layout()->addWidget(new_info_widget);
-    command_info_widget = new_info_widget;
+    if (command_info_widget) {
+        delete command_info_widget;
+        command_info_widget = nullptr;
+    }
+    if (new_info_widget) {
+        widget()->layout()->addWidget(new_info_widget);
+        command_info_widget = new_info_widget;
+    }
 }
 #undef COMMAND_IN_RANGE
 
@@ -297,8 +303,17 @@ GPUCommandListWidget::GPUCommandListWidget(QWidget* parent) : QDockWidget(tr("Pi
 
     list_widget = new QTreeView;
     list_widget->setModel(model);
-    list_widget->setFont(QFont("monospace"));
+    QFont font("monospace");
+    font.setStyleHint(QFont::Monospace); // Automatic fallback to a monospace font on on platforms without a font called "monospace"
+    list_widget->setFont(font);
     list_widget->setRootIsDecorated(false);
+    list_widget->setUniformRowHeights(true);
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+    list_widget->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+#else
+    list_widget->header()->setResizeMode(QHeaderView::ResizeToContents);
+#endif
 
     connect(list_widget->selectionModel(), SIGNAL(currentChanged(const QModelIndex&,const QModelIndex&)),
             this, SLOT(SetCommandInfo(const QModelIndex&)));
@@ -314,7 +329,7 @@ GPUCommandListWidget::GPUCommandListWidget(QWidget* parent) : QDockWidget(tr("Pi
 
     connect(copy_all, SIGNAL(clicked()), this, SLOT(CopyAllToClipboard()));
 
-    command_info_widget = new QWidget;
+    command_info_widget = nullptr;
 
     QVBoxLayout* main_layout = new QVBoxLayout;
     main_layout->addWidget(list_widget);
@@ -324,7 +339,6 @@ GPUCommandListWidget::GPUCommandListWidget(QWidget* parent) : QDockWidget(tr("Pi
         sub_layout->addWidget(copy_all);
         main_layout->addLayout(sub_layout);
     }
-    main_layout->addWidget(command_info_widget);
     main_widget->setLayout(main_layout);
 
     setWidget(main_widget);

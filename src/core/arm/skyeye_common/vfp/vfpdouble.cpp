@@ -51,6 +51,7 @@
  * ===========================================================================
  */
 
+#include <algorithm>
 #include "common/logging/log.h"
 #include "core/arm/skyeye_common/vfp/vfp.h"
 #include "core/arm/skyeye_common/vfp/vfp_helper.h"
@@ -70,9 +71,9 @@ static void vfp_double_dump(const char *str, struct vfp_double *d)
 
 static void vfp_double_normalise_denormal(struct vfp_double *vd)
 {
-    int bits = 31 - fls((ARMword)(vd->significand >> 32));
+    int bits = 31 - fls((u32)(vd->significand >> 32));
     if (bits == 31)
-        bits = 63 - fls((ARMword)vd->significand);
+        bits = 63 - fls((u32)vd->significand);
 
     vfp_double_dump("normalise_denormal: in", vd);
 
@@ -109,9 +110,9 @@ u32 vfp_double_normaliseround(ARMul_State* state, int dd, struct vfp_double *vd,
     exponent = vd->exponent;
     significand = vd->significand;
 
-    shift = 32 - fls((ARMword)(significand >> 32));
+    shift = 32 - fls((u32)(significand >> 32));
     if (shift == 32)
-        shift = 64 - fls((ARMword)significand);
+        shift = 64 - fls((u32)significand);
     if (shift) {
         exponent -= shift;
         significand <<= shift;
@@ -566,7 +567,7 @@ static u32 vfp_double_ftoui(ARMul_State* state, int sd, int unused, int dm, u32 
         /*
          * 2^0 <= m < 2^32-2^8
          */
-        d = (ARMword)((vdm.significand << 1) >> shift);
+        d = (u32)((vdm.significand << 1) >> shift);
         rem = vdm.significand << (65 - shift);
 
         if (rmode == FPSCR_ROUND_NEAREST) {
@@ -647,7 +648,7 @@ static u32 vfp_double_ftosi(ARMul_State* state, int sd, int unused, int dm, u32 
         int shift = 1023 + 63 - vdm.exponent;	/* 58 */
         u64 rem, incr = 0;
 
-        d = (ARMword)((vdm.significand << 1) >> shift);
+        d = (u32)((vdm.significand << 1) >> shift);
         rem = vdm.significand << (65 - shift);
 
         if (rmode == FPSCR_ROUND_NEAREST) {
@@ -785,9 +786,7 @@ u32 vfp_double_add(struct vfp_double *vdd, struct vfp_double *vdn,struct vfp_dou
      * This ensures that NaN propagation works correctly.
      */
     if (vdn->exponent < vdm->exponent) {
-        struct vfp_double *t = vdn;
-        vdn = vdm;
-        vdm = t;
+        std::swap(vdm, vdn);
     }
 
     /*
@@ -843,9 +842,7 @@ vfp_double_multiply(struct vfp_double *vdd, struct vfp_double *vdn,
      * This ensures that NaN propagation works correctly.
      */
     if (vdn->exponent < vdm->exponent) {
-        struct vfp_double *t = vdn;
-        vdn = vdm;
-        vdm = t;
+        std::swap(vdm, vdn);
         LOG_TRACE(Core_ARM11, "VFP: swapping M <-> N\n");
     }
 
